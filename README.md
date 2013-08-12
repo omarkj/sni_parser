@@ -46,4 +46,4 @@ the extensions. I might look into it.
                          {ok, hello_info()}.
 ```
 
-* Not guaranteed at all
+\* Not guaranteed at all
