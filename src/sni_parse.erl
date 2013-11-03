@@ -43,9 +43,8 @@ parse_ssl_version(<<MajorVersion:8/integer-big-unsigned,
             {error, unknown_tls_version}
     end.
 
-parse_length(<<Length:16/integer-unsigned,
-               Rest/binary>>, Retval) when 
-      Length =:= size(Rest) ->
+parse_length(<<Length:16/integer-big-unsigned,
+               Rest/binary>>, Retval) ->
     if Length =:= size(Rest) ->
             parse_handshake_type(Rest, Retval);
        true ->
