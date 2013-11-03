@@ -51,16 +51,16 @@ parse_length(<<Length:16/integer-big-unsigned,
             {error, {not_whole_handshake, Length - size(Rest)}}
     end.
 
-parse_handshake_type(<<?CLIENT_HELLO:8/integer-unsigned,
-                       Length:24/integer-unsigned,
+parse_handshake_type(<<?CLIENT_HELLO:8/integer-big-unsigned,
+                       Length:24/integer-big-unsigned,
                        Rest/binary>>, Retval) when Length =:= size(Rest)  ->
     parse_version(Rest, Retval);
 parse_handshake_type(_, _) ->
     {error, not_client_hello}.
 
-parse_version(<<_MajorVersion:8/integer-unsigned,
-                _MinorVersion:8/integer-unsigned,
-                GMTUnixTime:32/integer-unsigned,
+parse_version(<<_MajorVersion:8/integer-big-unsigned,
+                _MinorVersion:8/integer-big-unsigned,
+                GMTUnixTime:32/integer-big-unsigned,
                 Random:28/binary,
                 Rest/binary>>, Retval) ->
     parse_session(Rest, Retval#client_hello{gmt_unix_time = GMTUnixTime,
@@ -68,7 +68,7 @@ parse_version(<<_MajorVersion:8/integer-unsigned,
 parse_version(_, _) ->
     {error, invalid_client_hello}.
 
-parse_session(<<SessionIdLength:8/integer-unsigned,
+parse_session(<<SessionIdLength:8/integer-big-unsigned,
                 SessionId:SessionIdLength/binary,
                 Rest/binary>>, Retval) when SessionIdLength =< 32 ->
     parse_cipher_suites(Rest, Retval#client_hello{session_id = SessionId});
