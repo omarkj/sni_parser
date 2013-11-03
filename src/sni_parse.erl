@@ -8,6 +8,7 @@
 -define(SNI, 0).
 -define(SNI_HOST_NAME, 0).
 -define(SESSION_TICKET, 35).
+-define(ALPN, 16).
 
 -type bytes_missing() :: integer().
 -type parse_error() :: no_tls_handshake|
@@ -116,11 +117,12 @@ parse_extension(<<?SNI:16/integer-big-unsigned,
                   Rest/binary>>, #client_hello{extensions = Extensions} = Retval) ->
     ServerNameList = {sni, [{server_name_list, parse_server_name_list(ServerNameListBlob, [])}]},
     parse_extension(Rest, Retval#client_hello{extensions = Extensions ++ [ServerNameList]});
-parse_extension(<<?SESSION_TICKET:16/integer-big-unsigned,
-                  SessionTicketLength:16/integer-big-unsigned,
-                  _:SessionTicketLength/binary,
-                  Rest/binary>>, Retval) ->
-    parse_extension(Rest, Retval);
+parse_extension(<<?ALPN:16/integer-big-unsigned,
+                  ProtocolNameListLength:16/integer-big-unsigned,
+                  ProtocolNameListBlob:ProtocolNameListLength/binary,
+                  Rest/binary>>, #client_hello{extensions = Extensions} = Retval) ->
+    ProtocolNameList = {alpn, [{protocols, parse_protocol_name_list(ProtocolNameListBlob, [])}]},
+    parse_extension(Rest, Retval#client_hello{extensions = Extensions ++ [ProtocolNameList]});
 parse_extension(<<_:16/integer-big-unsigned,
                   Len:16/integer-big-unsigned,
                   _:Len/binary,
@@ -136,3 +138,10 @@ parse_server_name_list(<<_ServerNameLength:16/integer-big-unsigned,
                          ServerName:ServerNameStringLength/binary,
                          Rest/binary>>, ServerNameList) ->
     parse_server_name_list(Rest, ServerNameList ++ [ServerName]).
+
+parse_protocol_name_list(<<>>, ProtocolNameList) ->
+    ProtocolNameList;
+parse_protocol_name_list(<<ProtocolNameLength:16/integer-big-unsigned,
+                           ProtocolName:ProtocolNameLength/binary,
+                           Rest/binary>>, ProtocolNameList) ->
+    parse_protocol_name_list(Rest, ProtocolNameList ++ [ProtocolName]).
