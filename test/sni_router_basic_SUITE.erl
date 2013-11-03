@@ -1,5 +1,6 @@
 -module(sni_router_basic_SUITE).
 -include_lib("common_test/include/ct.hrl").
+-include("sni_parser.hrl").
 
 -export([all/0
          ,groups/0
@@ -18,8 +19,7 @@ all() -> [{group, basics}].
 
 groups() -> [{basics,
               [],
-              [parse_sni
-              ]}
+              [parse_sni]}
             ].
 
 init_per_suite(Config) ->
@@ -39,8 +39,9 @@ end_per_testcase(_, Config) ->
     Config.
 
 parse_sni(Config) ->
-    {ok, Parsed} = sni_parse:parse(hello_package()),
-    <<"lol.com">> = proplists:get_value(sni, Parsed),
+    {ok, #client_hello{extensions = Extensions}} = sni_parse:parse(hello_package()),
+    SNIExtension = proplists:get_value(sni, Extensions),
+    true = lists:member(<<"lol.com">>, proplists:get_value(server_name_list, SNIExtension)),
     Config.
 
 

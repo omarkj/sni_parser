@@ -1,32 +1,28 @@
 -module(sni_parse).
-
 -export([parse/1]).
+-include("sni_parser.hrl").
 
 -define(CONTENT_TYPE, 22).
 -define(MSG_TYPE, 1).
--define(SNI_EXTENSION, 0).
+-define(CLIENT_HELLO, 1).
+-define(SNI, 0).
+-define(SNI_HOST_NAME, 0).
+-define(SESSION_TICKET, 35).
 
+-type bytes_missing() :: integer().
 -type parse_error() :: no_tls_handshake|
-                       invalid_ssl_version|
-                       not_whole_handshake|
-                       invalid_handshake_1|
-                       invalid_handshake_2|
-                       invalid_handshake_3|
+                       unknown_tls_version|
+                       {not_whole_handshake, bytes_missing()}|
+                       not_client_hello|
+                       invalid_client_hello|
                        invalid_session_id|
-                       no_sni_extenson|
-                       invalid_extension_block|
-                       invalid_sni.
+                       invalid_cipher_suites|
+                       invalid_compression_methods|
+                       invalid_extensions.
 
--type hello_info() :: [info()].
-
--type info() :: {major_ssl_version|minor_ssl_version|
-                 gmt_unix_time, pos_integer()}|
-                {random, <<_:28>>}|
-                {session_id, binary()}|
-                {sni, binary()}.
-
+-type client_hello() :: #client_hello{}.
 -spec parse(binary()) -> {error, parse_error()}|
-                         {ok, hello_info()}.
+                         {ok, client_hello()}.
 parse(<<?CONTENT_TYPE, Rest/binary>>) ->
     parse_ssl_version(Rest);
 parse(Packet) ->
@@ -34,80 +30,109 @@ parse(Packet) ->
 
 parse_ssl_version(<<MajorVersion:8/integer-big-unsigned,
                     MinorVersion:8/integer-big-unsigned, 
-                    Rest/binary>>) when
-      MajorVersion =< 3 andalso
-      MinorVersion =< 1 ->
-    parse_length(Rest, [{major_ssl_version, MajorVersion},
-                        {minor_ssl_version, MinorVersion}]);
-parse_ssl_version(_) ->
-    {error, invalid_ssl_version}.
+                    Rest/binary>>) ->
+    case {MajorVersion, MinorVersion} of
+        {3, 1} ->
+            parse_length(Rest, #client_hello{tls_version={1,0}});
+        {3, 2} ->
+            parse_length(Rest, #client_hello{tls_version={1,1}});
+        {3, 3} ->
+            parse_length(Rest, #client_hello{tls_version={1,2}});
+        _ ->
+            {error, unknown_tls_version}
+    end.
 
-% Finishing up this Fragment, data left is the handshake
-parse_length(<<Length:16/integer-big-unsigned,
+parse_length(<<Length:16/integer-unsigned,
                Rest/binary>>, Retval) when 
       Length =:= size(Rest) ->
-    parse_handshake_type(Rest, Retval);
-parse_length(_, _) ->
-    {error, not_whole_handshake}.
+    if Length =:= size(Rest) ->
+            parse_handshake_type(Rest, Retval);
+       true ->
+            {error, {not_whole_handshake, Length - size(Rest)}}
+    end.
 
-parse_handshake_type(<<1:8/integer,
-                       _Length:24/unsigned-big-integer,
-                       Rest/binary>>, Retval) ->
-    % @todo check length
-    parse_version(Rest, Retval).
+parse_handshake_type(<<?CLIENT_HELLO:8/integer-unsigned,
+                       Length:24/integer-unsigned,
+                       Rest/binary>>, Retval) when Length =:= size(Rest)  ->
+    parse_version(Rest, Retval);
+parse_handshake_type(_, _) ->
+    {error, not_client_hello}.
 
-parse_version(<<_MajorVersion:8/unsigned-big-integer,
-                _MinorVersion:8/unsigned-big-integer,
-                GMTUnixTime:32/unsigned-big-integer,
+parse_version(<<_MajorVersion:8/integer-unsigned,
+                _MinorVersion:8/integer-unsigned,
+                GMTUnixTime:32/integer-unsigned,
                 Random:28/binary,
                 Rest/binary>>, Retval) ->
-    parse_session(Rest, [{gmt_unix_time, GMTUnixTime},
-                         {random, Random}|Retval]);
+    parse_session(Rest, Retval#client_hello{gmt_unix_time = GMTUnixTime,
+                                            random = Random});
 parse_version(_, _) ->
-    {error, invalid_handshake_1}.
+    {error, invalid_client_hello}.
 
-parse_session(<<SessionIdLength:8/unsigned-big-integer,
+parse_session(<<SessionIdLength:8/integer-unsigned,
                 SessionId:SessionIdLength/binary,
                 Rest/binary>>, Retval) when SessionIdLength =< 32 ->
-    parse_until_extensions(Rest, [{session_id, SessionId}|Retval]);
+    parse_cipher_suites(Rest, Retval#client_hello{session_id = SessionId});
 parse_session(_, _) ->
     {error, invalid_session_id}.
 
-parse_until_extensions(<<CipherSuitesLength:16/unsigned-big-integer,
-                         _CipherSuites:CipherSuitesLength/binary,
-                         CompressionMethodsLength:8/unsigned-big-integer,
-                         _CompressionMethods:CompressionMethodsLength/binary,
-                         Rest/binary>>, Retval) ->
-    parse_extensions(Rest, Retval);
-parse_until_extensions(_, _) ->
-    {error, invalid_handshake_2}.
+parse_cipher_suites(<<CipherSuitesLength:16/integer-big-unsigned,
+                      CipherSuites:CipherSuitesLength/binary,
+                      Rest/binary>>, Retval) ->
+    parse_compression_methods(Rest, Retval#client_hello{cipher_suites = parse_cipher_suite(CipherSuites, [])});
+parse_cipher_suites(_, _) ->
+    {error, invalid_cipher_suites}.
 
-parse_extensions(<<ExtLength:16/unsigned-big-integer,
-                   Extensions:ExtLength/binary,
-                   _/binary>>, Retval) ->
-    parse_extension(Extensions, Retval);
+parse_compression_methods(<<CompressionMethodsLength:8/integer-big-unsigned,
+                            CompressionMethods:CompressionMethodsLength/binary,
+                            Rest/binary>>, Retval) ->
+    parse_extensions(Rest, Retval#client_hello{compression_methods = parse_compression_method(CompressionMethods, [])});
+parse_compression_methods(_, _) ->
+    {error, invalid_compression_methods}.
+
+parse_extensions(<<ExtensionsLength:16/unsigned-big-integer,
+                   ExtensionsBlob:ExtensionsLength/binary>>, Retval) ->
+    parse_extension(ExtensionsBlob, Retval);
 parse_extensions(_, _) ->
-    {error, invalid_handshake_3}.
+    {error, invalid_extensions}.
 
-parse_extension(<<>>, _) ->
-    {error, no_sni_extenson};
-parse_extension(<<12:8/integer,
-                  SNILength:16/unsigned-big-integer,
-                  SNIPart:SNILength/binary,
-                  _Rest/binary>>, Retval) ->
-    parse_sni(SNIPart, Retval);
-parse_extension(<<_:8/integer,
-                  Length:16/unsigned-big-integer,
-                  _Data:Length/binary,
+parse_cipher_suite(<<>>, CipherSuites) ->
+    CipherSuites;
+parse_cipher_suite(<<A:8/integer-big-unsigned,
+                     B:8/integer-big-unsigned,
+                     Rest/binary>>, CipherSuites) ->
+    parse_cipher_suite(Rest, CipherSuites ++ [{A, B}]).
+
+parse_compression_method(<<>>, CompressionMethods) ->
+    CompressionMethods;
+parse_compression_method(<<CompressionMethod:8/integer-big-unsigned,
+                           Rest/binary>>, CompressionMethods) ->
+    parse_compression_method(Rest, CompressionMethods ++ [CompressionMethod]).
+
+parse_extension(<<>>, Retval) ->
+    {ok, Retval};
+parse_extension(<<?SNI:16/integer-big-unsigned,
+                  ServerNameListLength:16/integer-big-unsigned,
+                  ServerNameListBlob:ServerNameListLength/binary,
+                  Rest/binary>>, #client_hello{extensions = Extensions} = Retval) ->
+    ServerNameList = {sni, [{server_name_list, parse_server_name_list(ServerNameListBlob, [])}]},
+    parse_extension(Rest, Retval#client_hello{extensions = Extensions ++ [ServerNameList]});
+parse_extension(<<?SESSION_TICKET:16/integer-big-unsigned,
+                  SessionTicketLength:16/integer-big-unsigned,
+                  _:SessionTicketLength/binary,
                   Rest/binary>>, Retval) ->
     parse_extension(Rest, Retval);
-parse_extension(_, _) ->
-    {error, invalid_extension_block}.
+parse_extension(<<_:16/integer-big-unsigned,
+                  Len:16/integer-big-unsigned,
+                  _:Len/binary,
+                  Rest/binary>>, Retval) ->
+    % @todo log?
+    parse_extension(Rest, Retval).
 
-
-parse_sni(<<?SNI_EXTENSION:8/unsigned-big-integer,
-            SNIHostLength:16/unsigned-big-integer,
-            SNI:SNIHostLength/binary>>, Retval) ->
-    {ok, [{sni, SNI}|Retval]};
-parse_sni(_,_) ->
-    {error, invalid_sni}.
+parse_server_name_list(<<>>, ServerNameList) ->
+    ServerNameList;
+parse_server_name_list(<<_ServerNameLength:16/integer-big-unsigned,
+                         ?SNI_HOST_NAME:8/integer-big-unsigned,
+                         ServerNameStringLength:16/integer-big-unsigned,
+                         ServerName:ServerNameStringLength/binary,
+                         Rest/binary>>, ServerNameList) ->
+    parse_server_name_list(Rest, ServerNameList ++ [ServerName]).
