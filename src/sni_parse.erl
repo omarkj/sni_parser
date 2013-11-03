@@ -24,7 +24,7 @@
 -type client_hello() :: #client_hello{}.
 -spec parse(binary()) -> {error, parse_error()}|
                          {ok, client_hello()}.
-parse(<<?CONTENT_TYPE, Rest/binary>>) ->
+parse(<<?CONTENT_TYPE:8/integer-big-unsigned, Rest/binary>>) ->
     parse_ssl_version(Rest);
 parse(Packet) ->
     {error, {no_tls_handshake, Packet}}.
