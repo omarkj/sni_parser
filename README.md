@@ -15,12 +15,6 @@ probably functional
 [ALNP](http://tools.ietf.org/html/draft-friedl-tls-applayerprotoneg-00)
 parser as well.
 
-## Does it work?
-
-Yes and no. I haven't tested it much but it seems to work well with OpenSSL 
-s_client and Firefox. Chrome (28) doesn't work - there is a problem parsing
-the extensions. I might look into it.
-
 ## Types
 
 ``` erlang
